@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/cheggaaa/pb/v3"
 	"github.com/davidbyttow/govips/v2/vips"
 )
 
@@ -28,8 +29,8 @@ type Config struct {
 }
 
 type Tile struct {
-	Tile *image.RGBA
-	Tiny *image.RGBA
+	Filename string
+	Tiny     image.Image
 }
 
 type HasAt interface {
@@ -78,41 +79,34 @@ func (g *Gosaic) loadTiles() error {
 			wg.Add(1)
 			for path := range imgPathChan {
 				count++
-				log.Printf("[%d] %s\n", id, path)
+				// log.Printf("[%d] %s\n", id, path)
 				img, err := vips.NewImageFromFile(path)
 				if err != nil {
 					log.Printf("%s: %s\n", path, err)
 					continue
 				}
 
-				err = img.SmartCrop(g.config.TileSize, g.config.TileSize, vips.InterestingAttention)
+				err = img.ToColorSpace(vips.InterpretationSRGB)
 				if err != nil {
 					log.Printf("%s: %s\n", path, err)
 					continue
 				}
 
-				t1, err := img.ToImage(vips.NewDefaultPNGExportParams())
-				if err != nil {
-					log.Printf("%s: %s\n", path, err)
-					continue
-				}
-				// g.SaveAsJPEG(tile, fmt.Sprintf("test/tile_%04d.jpg", count))
-
-				err = img.Thumbnail(g.config.CompareSize, g.config.CompareSize, vips.InterestingCentre)
+				err = img.SmartCrop(g.config.CompareSize, g.config.CompareSize, vips.InterestingCentre)
 				if err != nil {
 					log.Printf("%s: %s\n", path, err)
 					continue
 				}
 
-				t2, err := img.ToImage(vips.NewDefaultPNGExportParams())
+				tinyImg, err := img.ToImage(vips.NewDefaultPNGExportParams())
 				if err != nil {
 					log.Printf("%s: %s\n", path, err)
 					continue
 				}
 
 				tile := Tile{
-					Tile: t1.(*image.RGBA),
-					Tiny: t2.(*image.RGBA),
+					Filename: path,
+					Tiny:     tinyImg,
 				}
 
 				tileChan <- tile
@@ -129,13 +123,6 @@ func (g *Gosaic) loadTiles() error {
 
 	close(tileChan)
 	wg2.Wait()
-
-	count = 0
-	for cur := g.Tiles.Front(); cur != nil; cur = cur.Next() {
-		count++
-		img := cur.Value.(Tile)
-		g.SaveAsJPEG(img.Tile, fmt.Sprintf("test/tile_%d.jpg", count))
-	}
 
 	return nil
 }
@@ -161,11 +148,6 @@ func (g *Gosaic) Difference(img1, img2 HasAt) (float64, error) {
 			r1, g1, b1, _ := img1.At(x1, y1).RGBA()
 			r2, g2, b2, _ := img2.At(x2, y2).RGBA()
 
-			/*
-				if x == 20 && y == 20 {
-					fmt.Printf("%d/%d img1 %d/%d/%d - %d/%d img2 %d/%d/%d\n", x1, y1, r1/255, g1/255, b1/255, x2, y2, r2/255, g2/255, b2/255)
-				}
-			*/
 			sum += int64(g.diff(r1, r2))
 			sum += int64(g.diff(g1, g2))
 			sum += int64(g.diff(b1, b2))
@@ -175,7 +157,6 @@ func (g *Gosaic) Difference(img1, img2 HasAt) (float64, error) {
 	nPixels := b.Dx() * b.Dy()
 
 	dist := float64(sum) / (float64(nPixels) * 0xffff * 3)
-	// fmt.Printf("dist: %.3f %v / %v - %d\n", dist, b, c, sum)
 	return dist, nil
 }
 
@@ -198,11 +179,12 @@ func (g *Gosaic) Build() {
 	rows := g.SeedImage.Bounds().Size().X / g.config.TileSize
 	cols := g.SeedImage.Bounds().Size().Y / g.config.TileSize
 
+	bar := pb.StartNew(rows * cols)
+
 	//cur := g.tiles.Front()
 
 	for x := 0; x < rows; x++ {
 		for y := 0; y < cols; y++ {
-			fmt.Printf("%d/%d\n", x, y)
 			rect := image.Rect(x*g.config.TileSize, y*g.config.TileSize, (x+1)*g.config.TileSize, (y+1)*g.config.TileSize)
 			subImg := g.SeedImage.SubImage(rect)
 
@@ -230,16 +212,8 @@ func (g *Gosaic) Build() {
 			}
 
 			minDist := 1.0
-			var minTile image.Image
+			var minTile Tile
 			var minTileElem *list.Element
-
-			//g.SaveAsJPEG(subImg, fmt.Sprintf("test/tile_%d_%d.jpg", x, y))
-
-			/*
-				tile := cur.Value.(*image.RGBA)
-				cur = cur.Next()
-				minTile = tile
-			*/
 
 			count := 0
 			tileRect := image.Rect(0, 0, g.config.CompareSize, g.config.CompareSize)
@@ -248,9 +222,11 @@ func (g *Gosaic) Build() {
 				count++
 
 				tile := cur.Value.(Tile)
-				tileImg := tile.Tiny.SubImage(tileRect)
-				dist, err := g.Difference(compareImg.(*image.RGBA).SubImage(tileRect), tileImg.(*image.RGBA))
-				//log.Printf("%d/%d [%d] diff: %f\n", x, y, count, dist)
+				tileImg := tile.Tiny
+				dist, err := g.Difference(
+					compareImg.(*image.RGBA).SubImage(tileRect),
+					tileImg.(*image.RGBA),
+				)
 				if err != nil {
 					log.Println(err)
 					continue
@@ -258,20 +234,36 @@ func (g *Gosaic) Build() {
 
 				if dist < minDist {
 					minDist = dist
-					minTile = tile.Tile
+					minTile = tile
 					minTileElem = cur
 				}
 			}
 
-			if minTile == nil {
-				log.Println("minTile is nil!")
+			if minTile.Filename == "" {
+				log.Println("minTile is empty!")
 			} else {
 				g.Tiles.Remove(minTileElem)
-				draw.Draw(g.SeedImage, rect, minTile, image.ZP, draw.Over)
+				imgRef, err := vips.NewImageFromFile(minTile.Filename)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+				err = imgRef.ToColorSpace(vips.InterpretationSRGB)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+				err = imgRef.SmartCrop(g.config.TileSize, g.config.TileSize, vips.InterestingCentre)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+				tileImg, err := imgRef.ToImage(vips.NewDefaultPNGExportParams())
+				draw.Draw(g.SeedImage, rect, tileImg, image.ZP, draw.Over)
 				g.SaveAsJPEG(g.SeedImage, g.config.OutputImage)
 			}
 
-			//draw.Draw(g.SeedImage)
+			bar.Increment()
 		}
 	}
 
