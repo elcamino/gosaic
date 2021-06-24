@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"image"
 	"log"
+	"os"
+	"runtime/pprof"
 
 	"github.com/davidbyttow/govips/v2/vips"
 	"github.com/elcamino/gosaic"
@@ -18,9 +20,23 @@ func main() {
 		outputSize  = flag.Int("outputsize", 2000, "size of the output file")
 		output      = flag.String("output", "mosaic.jpg", "the mosaic output file")
 		comparesize = flag.Int("comparesize", 20, "the size to which to scale pictures before comparing them for their distance")
+		comparedist = flag.Int("comparedist", 30, "only compare image whose average color is this far apart")
+		unique      = flag.Bool("unique", false, "use each tile only once")
+		cpuprofile  = flag.String("cpuprofile", "", "profile the CPU usage to this file")
+		smartcrop   = flag.Bool("smartcrop", false, "perform smart cropping of the tiles")
+		progressbar = flag.Bool("progressbar", false, "show a progress bar when loading tiles and building the mosaic")
 	)
 
 	flag.Parse()
+
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
 
 	g, err := gosaic.New(gosaic.Config{
 		SeedImage:   *seed,
@@ -29,6 +45,10 @@ func main() {
 		OutputSize:  *outputSize,
 		OutputImage: *output,
 		CompareSize: *comparesize,
+		CompareDist: float64(*comparedist),
+		Unique:      *unique,
+		SmartCrop:   *smartcrop,
+		ProgressBar: *progressbar,
 	})
 	if err != nil {
 		log.Fatal(err)

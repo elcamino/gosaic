@@ -11,9 +11,13 @@ import (
 	"image/jpeg"
 	"image/png"
 	"log"
+	"math"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/cheggaaa/pb/v3"
 	"github.com/davidbyttow/govips/v2/vips"
@@ -26,11 +30,16 @@ type Config struct {
 	TileSize    int
 	TilesGlob   string
 	CompareSize int
+	CompareDist float64
+	Unique      bool
+	SmartCrop   bool
+	ProgressBar bool
 }
 
 type Tile struct {
 	Filename string
 	Tiny     image.Image
+	Average  float64
 }
 
 type HasAt interface {
@@ -38,6 +47,26 @@ type HasAt interface {
 	ColorModel() color.Model
 	Bounds() image.Rectangle
 }
+
+type ProgressIndicator interface {
+	Increment() *pb.ProgressBar
+	Finish() *pb.ProgressBar
+}
+
+type ProgressCounter struct {
+	count uint64
+	max   uint64
+}
+
+func (c *ProgressCounter) Increment() *pb.ProgressBar {
+	atomic.AddUint64(&c.count, 1)
+	cur := atomic.LoadUint64(&c.count)
+	max := atomic.LoadUint64(&c.max)
+	fmt.Printf("%d/%d (%.2f%%)\n", cur, max, 100.0*float64(cur)/float64(max))
+	return nil
+}
+
+func (c *ProgressCounter) Finish() *pb.ProgressBar { return nil }
 
 type Gosaic struct {
 	seedVIPSImage *vips.ImageRef
@@ -73,32 +102,25 @@ func (g *Gosaic) loadTiles() error {
 		wg2.Done()
 	}()
 
+	log.Println("Loading Tiles")
+	var bar ProgressIndicator
+
+	if g.config.ProgressBar {
+		bar = pb.StartNew(len(tilePaths))
+	} else {
+		bar = &ProgressCounter{count: 0, max: uint64(len(tilePaths))}
+	}
+
 	count := 0
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 16; i++ {
 		go func(id int) {
 			wg.Add(1)
 			for path := range imgPathChan {
 				count++
+				bar.Increment()
 				// log.Printf("[%d] %s\n", id, path)
-				img, err := vips.NewImageFromFile(path)
-				if err != nil {
-					log.Printf("%s: %s\n", path, err)
-					continue
-				}
 
-				err = img.ToColorSpace(vips.InterpretationSRGB)
-				if err != nil {
-					log.Printf("%s: %s\n", path, err)
-					continue
-				}
-
-				err = img.SmartCrop(g.config.CompareSize, g.config.CompareSize, vips.InterestingCentre)
-				if err != nil {
-					log.Printf("%s: %s\n", path, err)
-					continue
-				}
-
-				tinyImg, err := img.ToImage(vips.NewDefaultPNGExportParams())
+				tinyImg, avg, err := g.loadTile(path, g.config.CompareSize)
 				if err != nil {
 					log.Printf("%s: %s\n", path, err)
 					continue
@@ -107,6 +129,7 @@ func (g *Gosaic) loadTiles() error {
 				tile := Tile{
 					Filename: path,
 					Tiny:     tinyImg,
+					Average:  avg,
 				}
 
 				tileChan <- tile
@@ -123,6 +146,8 @@ func (g *Gosaic) loadTiles() error {
 
 	close(tileChan)
 	wg2.Wait()
+
+	bar.Finish()
 
 	return nil
 }
@@ -175,98 +200,194 @@ func (g *Gosaic) SaveAsJPEG(img image.Image, filename string) error {
 	return nil
 }
 
-func (g *Gosaic) Build() {
-	rows := g.SeedImage.Bounds().Size().X / g.config.TileSize
-	cols := g.SeedImage.Bounds().Size().Y / g.config.TileSize
+func (g *Gosaic) loadTile(filename string, size int) (image.Image, float64, error) {
+	imgRef, err := vips.NewImageFromFile(filename)
+	if err != nil {
+		return nil, 0, err
+	}
 
-	bar := pb.StartNew(rows * cols)
+	// remove a white frame around the picture
+	left, top, width, height, err := imgRef.FindTrim(40, &vips.Color{R: 255, G: 255, B: 255})
+	if err != nil {
+		return nil, 0, err
+	}
 
-	//cur := g.tiles.Front()
-
-	for x := 0; x < rows; x++ {
-		for y := 0; y < cols; y++ {
-			rect := image.Rect(x*g.config.TileSize, y*g.config.TileSize, (x+1)*g.config.TileSize, (y+1)*g.config.TileSize)
-			subImg := g.SeedImage.SubImage(rect)
-
-			buf := bytes.NewBuffer([]byte{})
-			err := png.Encode(buf, subImg)
-			if err != nil {
-				log.Println(err)
-				continue
-			}
-			imgRef, err := vips.NewImageFromReader(buf)
-			if err != nil {
-				log.Println(err)
-				continue
-			}
-			err = imgRef.Thumbnail(g.config.CompareSize, g.config.CompareSize, vips.InterestingCentre)
-			if err != nil {
-				log.Println(err)
-				continue
-			}
-
-			compareImg, err := imgRef.ToImage(vips.NewDefaultPNGExportParams())
-			if err != nil {
-				log.Println(err)
-				continue
-			}
-
-			minDist := 1.0
-			var minTile Tile
-			var minTileElem *list.Element
-
-			count := 0
-			tileRect := image.Rect(0, 0, g.config.CompareSize, g.config.CompareSize)
-
-			for cur := g.Tiles.Front(); cur != nil; cur = cur.Next() {
-				count++
-
-				tile := cur.Value.(Tile)
-				tileImg := tile.Tiny
-				dist, err := g.Difference(
-					compareImg.(*image.RGBA).SubImage(tileRect),
-					tileImg.(*image.RGBA),
-				)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-
-				if dist < minDist {
-					minDist = dist
-					minTile = tile
-					minTileElem = cur
-				}
-			}
-
-			if minTile.Filename == "" {
-				log.Println("minTile is empty!")
-			} else {
-				g.Tiles.Remove(minTileElem)
-				imgRef, err := vips.NewImageFromFile(minTile.Filename)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-				err = imgRef.ToColorSpace(vips.InterpretationSRGB)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-				err = imgRef.SmartCrop(g.config.TileSize, g.config.TileSize, vips.InterestingCentre)
-				if err != nil {
-					log.Println(err)
-					continue
-				}
-				tileImg, err := imgRef.ToImage(vips.NewDefaultPNGExportParams())
-				draw.Draw(g.SeedImage, rect, tileImg, image.ZP, draw.Over)
-				g.SaveAsJPEG(g.SeedImage, g.config.OutputImage)
-			}
-
-			bar.Increment()
+	if width < imgRef.Width() || height < imgRef.Height() { // &&
+		// (float64(width)/float64(img.Width()) > 0.8 && float64(height)/float64(img.Height()) > 0.8) {
+		err = imgRef.ExtractArea(left, top, width, height)
+		if err != nil {
+			return nil, 0, err
 		}
 	}
 
+	err = imgRef.ToColorSpace(vips.InterpretationSRGB)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	avg, err := imgRef.Average()
+	if err != nil {
+		return nil, 0, err
+	}
+
+	//fmt.Println(avg)
+
+	if g.config.SmartCrop {
+		err = imgRef.SmartCrop(size, size, vips.InterestingAttention)
+	} else {
+		err = imgRef.Thumbnail(size, size, vips.InterestingAttention)
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+
+	img, err := imgRef.ToImage(vips.NewDefaultPNGExportParams())
+	return img, avg, err
+}
+
+func (g *Gosaic) Build() {
+	rows := g.SeedImage.Bounds().Size().X/g.config.TileSize + 1
+	cols := g.SeedImage.Bounds().Size().Y/g.config.TileSize + 1
+
+	log.Println("Building Mosaic")
+	var bar ProgressIndicator
+	if g.config.ProgressBar {
+		bar = pb.StartNew(rows * cols)
+	} else {
+		bar = &ProgressCounter{count: 0, max: uint64(rows * cols)}
+	}
+
+	rects := make([]image.Rectangle, 0)
+	for x := 0; x < rows; x++ {
+		for y := 0; y < cols; y++ {
+			rects = append(rects, image.Rect(x*g.config.TileSize, y*g.config.TileSize, (x+1)*g.config.TileSize, (y+1)*g.config.TileSize))
+		}
+	}
+
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(rects), func(i, j int) { rects[i], rects[j] = rects[j], rects[i] })
+
+	comparisons := 0
+
+	var tRect, tCompare, tLoad time.Duration
+
+	for _, rect := range rects {
+		tRectStart := time.Now()
+		// rect := image.Rect(x*g.config.TileSize, y*g.config.TileSize, (x+1)*g.config.TileSize, (y+1)*g.config.TileSize)
+		subImg := g.SeedImage.SubImage(rect)
+
+		buf := bytes.NewBuffer([]byte{})
+		err := png.Encode(buf, subImg)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		imgRef, err := vips.NewImageFromReader(buf)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		err = imgRef.Thumbnail(g.config.CompareSize, g.config.CompareSize, vips.InterestingAttention)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		avg, err := imgRef.Average()
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		compareImg, err := imgRef.ToImage(vips.NewDefaultPNGExportParams())
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		minDist := 1.0
+		var minTile Tile
+		var minTileElem *list.Element
+
+		tileRect := image.Rect(0, 0, g.config.CompareSize, g.config.CompareSize)
+
+		tileChan := make(chan *list.Element)
+		tileWG := sync.WaitGroup{}
+		tileMutex := sync.Mutex{}
+		tRect += time.Now().Sub(tRectStart)
+
+		for i := 0; i < 100; i++ {
+			tileWG.Add(1)
+			go func(id int) {
+				for elem := range tileChan {
+					tStart := time.Now()
+					tile := elem.Value.(Tile)
+
+					if math.Abs(tile.Average-avg) > g.config.CompareDist {
+						continue
+					}
+
+					// log.Printf("[%d] %d - %s\n", id, comparisons, tile.Filename)
+
+					tileImg := tile.Tiny
+					dist, err := g.Difference(
+						compareImg.(*image.RGBA).SubImage(tileRect),
+						tileImg.(*image.RGBA),
+					)
+					if err != nil {
+						log.Println(err)
+						continue
+					}
+
+					if dist < minDist {
+						tileMutex.Lock()
+						minTile = tile
+						minDist = dist
+						minTileElem = elem
+						comparisons++
+						tCompare += time.Now().Sub(tStart)
+						tileMutex.Unlock()
+					}
+				}
+				tileWG.Done()
+			}(i)
+		}
+
+		for cur := g.Tiles.Front(); cur != nil; cur = cur.Next() {
+			tileChan <- cur
+		}
+		close(tileChan)
+
+		tileWG.Wait()
+
+		tStart := time.Now()
+		if minTile.Filename == "" {
+			log.Println("minTile is empty!")
+		} else {
+			if g.config.Unique {
+				g.Tiles.Remove(minTileElem)
+			}
+
+			tileImg, _, err := g.loadTile(minTile.Filename, g.config.TileSize)
+			if err != nil {
+				log.Println(err)
+				continue
+			}
+			draw.Draw(g.SeedImage, rect, tileImg, image.ZP, draw.Over)
+			//g.SaveAsJPEG(g.SeedImage, g.config.OutputImage)
+		}
+		tLoad += time.Now().Sub(tStart)
+
+		bar.Increment()
+	}
+
+	bar.Finish()
+
+	log.Printf("Comparisons: %d\n", comparisons)
+	log.Printf("Rect time: %s\n", tRect)
+	log.Printf("Compare time: %s\n", tCompare)
+	log.Printf("Load time: %s\n", tLoad)
 	err := g.SaveAsJPEG(g.SeedImage, g.config.OutputImage)
 	if err != nil {
 		log.Fatal(err)
