@@ -3,6 +3,7 @@ package gosaic
 import (
 	"bytes"
 	"container/list"
+	"context"
 	"errors"
 	"fmt"
 	"image"
@@ -15,12 +16,15 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
 	"github.com/davidbyttow/govips/v2/vips"
+	redis "github.com/go-redis/redis/v8"
 )
 
 type Config struct {
@@ -34,6 +38,8 @@ type Config struct {
 	Unique      bool
 	SmartCrop   bool
 	ProgressBar bool
+	RedisAddr   string
+	RedisLabel  string
 }
 
 type Tile struct {
@@ -74,6 +80,7 @@ type Gosaic struct {
 	Tiles         *list.List
 	config        Config
 	scaleFactor   float64
+	rdb           *redis.Client
 }
 
 func (g *Gosaic) diff(a, b uint32) int32 {
@@ -83,7 +90,88 @@ func (g *Gosaic) diff(a, b uint32) int32 {
 	return int32(b - a)
 }
 
-func (g *Gosaic) loadTiles() error {
+func (g *Gosaic) loadTilesFromRedis() error {
+	var cursor uint64
+	tRedis := time.Duration(0)
+
+	keyPattern := fmt.Sprintf("%s:%d:*.jpg", g.config.RedisLabel, g.config.CompareSize)
+	keys := []string{}
+	cmd := g.rdb.Scan(context.Background(), cursor, keyPattern, 1000)
+	iter := cmd.Iterator()
+	for iter.Next(context.Background()) {
+		keys = append(keys, iter.Val())
+	}
+
+	var bar ProgressIndicator
+	if g.config.ProgressBar {
+		bar = pb.StartNew(len(keys))
+	} else {
+		bar = &ProgressCounter{count: 0, max: uint64(len(keys))}
+	}
+
+	for _, k := range keys {
+		bar.Increment()
+		tStart := time.Now()
+
+		keyParts := strings.Split(k, ":")
+		avg, err := strconv.Atoi(keyParts[2])
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		data, err := g.rdb.Get(context.Background(), k).Bytes()
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		buf := bytes.NewBuffer(data)
+		img, err := jpeg.Decode(buf)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		// tile = g.BuildTile()
+		tile, err := g.buildTile(img, k, avg)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		g.Tiles.PushBack(tile)
+
+		tRedis += time.Now().Sub(tStart)
+	}
+
+	bar.Finish()
+	return nil
+}
+
+func (g *Gosaic) buildTile(img image.Image, label string, avg int) (Tile, error) {
+	var err error
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.Println(r)
+			err = errors.New("failed to cast image to RGBA")
+		}
+	}()
+
+	b := img.Bounds()
+	m := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	draw.Draw(m, m.Bounds(), img, b.Min, draw.Src)
+
+	tile := Tile{
+		Filename: label,
+		Average:  float64(avg),
+		Tiny:     m,
+	}
+
+	return tile, err
+}
+
+func (g *Gosaic) loadTilesFromDisk() error {
 	tileChan := make(chan Tile)
 	imgPathChan := make(chan string)
 	wg := sync.WaitGroup{}
@@ -118,18 +206,11 @@ func (g *Gosaic) loadTiles() error {
 			for path := range imgPathChan {
 				count++
 				bar.Increment()
-				// log.Printf("[%d] %s\n", id, path)
 
-				tinyImg, avg, err := g.loadTile(path, g.config.CompareSize)
+				tile, err := g.loadTileFromDisk(path, g.config.CompareSize)
 				if err != nil {
 					log.Printf("%s: %s\n", path, err)
 					continue
-				}
-
-				tile := Tile{
-					Filename: path,
-					Tiny:     tinyImg,
-					Average:  avg,
 				}
 
 				tileChan <- tile
@@ -200,37 +281,79 @@ func (g *Gosaic) SaveAsJPEG(img image.Image, filename string) error {
 	return nil
 }
 
-func (g *Gosaic) loadTile(filename string, size int) (image.Image, float64, error) {
+func (g *Gosaic) loadTileFromRedis(key string, size int) (Tile, error) {
+	tile := Tile{Filename: key}
+	//tStart := time.Now()
+
+	keyParts := strings.Split(key, ":")
+	keyParts[1] = fmt.Sprintf("%d", size)
+	avg, err := strconv.Atoi(keyParts[2])
+	if err != nil {
+		return tile, err
+	}
+
+	keyParts[2] = "*"
+	keyPattern := strings.Join(keyParts, ":")
+	var cursor uint64
+	resp := g.rdb.Scan(context.Background(), cursor, keyPattern, 100)
+	iter := resp.Iterator()
+	var imgKey string
+	if iter.Next(context.Background()) {
+		imgKey = iter.Val()
+	}
+	if err != nil {
+		log.Println(err)
+		return tile, err
+	}
+	data, err := g.rdb.Get(context.Background(), imgKey).Bytes()
+	if err != nil {
+		return tile, err
+	}
+
+	buf := bytes.NewBuffer(data)
+	img, err := jpeg.Decode(buf)
+	if err != nil {
+		return tile, nil
+	}
+
+	b := img.Bounds()
+	m := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	draw.Draw(m, m.Bounds(), img, b.Min, draw.Src)
+
+	tile.Tiny = m
+	tile.Average = float64(avg)
+
+	return tile, nil
+}
+
+func (g *Gosaic) loadTileFromDisk(filename string, size int) (Tile, error) {
 	imgRef, err := vips.NewImageFromFile(filename)
 	if err != nil {
-		return nil, 0, err
+		return Tile{}, err
 	}
 
 	// remove a white frame around the picture
 	left, top, width, height, err := imgRef.FindTrim(40, &vips.Color{R: 255, G: 255, B: 255})
 	if err != nil {
-		return nil, 0, err
+		return Tile{}, err
 	}
 
-	if width < imgRef.Width() || height < imgRef.Height() { // &&
-		// (float64(width)/float64(img.Width()) > 0.8 && float64(height)/float64(img.Height()) > 0.8) {
+	if width < imgRef.Width() || height < imgRef.Height() {
 		err = imgRef.ExtractArea(left, top, width, height)
 		if err != nil {
-			return nil, 0, err
+			return Tile{}, err
 		}
 	}
 
 	err = imgRef.ToColorSpace(vips.InterpretationSRGB)
 	if err != nil {
-		return nil, 0, err
+		return Tile{}, err
 	}
 
 	avg, err := imgRef.Average()
 	if err != nil {
-		return nil, 0, err
+		return Tile{}, err
 	}
-
-	//fmt.Println(avg)
 
 	if g.config.SmartCrop {
 		err = imgRef.SmartCrop(size, size, vips.InterestingAttention)
@@ -238,11 +361,11 @@ func (g *Gosaic) loadTile(filename string, size int) (image.Image, float64, erro
 		err = imgRef.Thumbnail(size, size, vips.InterestingAttention)
 	}
 	if err != nil {
-		return nil, 0, err
+		return Tile{}, err
 	}
 
 	img, err := imgRef.ToImage(vips.NewDefaultPNGExportParams())
-	return img, avg, err
+	return Tile{Tiny: img, Average: avg, Filename: filename}, err
 }
 
 func (g *Gosaic) Build() {
@@ -250,6 +373,7 @@ func (g *Gosaic) Build() {
 	cols := g.SeedImage.Bounds().Size().Y/g.config.TileSize + 1
 
 	log.Println("Building Mosaic")
+
 	var bar ProgressIndicator
 	if g.config.ProgressBar {
 		bar = pb.StartNew(rows * cols)
@@ -273,7 +397,6 @@ func (g *Gosaic) Build() {
 
 	for _, rect := range rects {
 		tRectStart := time.Now()
-		// rect := image.Rect(x*g.config.TileSize, y*g.config.TileSize, (x+1)*g.config.TileSize, (y+1)*g.config.TileSize)
 		subImg := g.SeedImage.SubImage(rect)
 
 		buf := bytes.NewBuffer([]byte{})
@@ -323,12 +446,14 @@ func (g *Gosaic) Build() {
 				for elem := range tileChan {
 					tStart := time.Now()
 					tile := elem.Value.(Tile)
+					if tile.Tiny == nil {
+						log.Printf("%s has empty image data\n", tile.Filename)
+						continue
+					}
 
 					if math.Abs(tile.Average-avg) > g.config.CompareDist {
 						continue
 					}
-
-					// log.Printf("[%d] %d - %s\n", id, comparisons, tile.Filename)
 
 					tileImg := tile.Tiny
 					dist, err := g.Difference(
@@ -369,13 +494,21 @@ func (g *Gosaic) Build() {
 				g.Tiles.Remove(minTileElem)
 			}
 
-			tileImg, _, err := g.loadTile(minTile.Filename, g.config.TileSize)
+			var tile Tile
+			if g.rdb != nil {
+				tile, err = g.loadTileFromRedis(minTile.Filename, g.config.TileSize)
+				if err != nil {
+					log.Println(err)
+					continue
+				}
+			} else {
+				tile, err = g.loadTileFromDisk(minTile.Filename, g.config.TileSize)
+			}
 			if err != nil {
 				log.Println(err)
 				continue
 			}
-			draw.Draw(g.SeedImage, rect, tileImg, image.ZP, draw.Over)
-			//g.SaveAsJPEG(g.SeedImage, g.config.OutputImage)
+			draw.Draw(g.SeedImage, rect, tile.Tiny, image.ZP, draw.Over)
 		}
 		tLoad += time.Now().Sub(tStart)
 
@@ -414,9 +547,6 @@ func New(config Config) (*Gosaic, error) {
 		scaleFactor = scaleFactorY
 	}
 
-	fmt.Printf("master scale factor: %f\n", scaleFactor)
-	//os.Exit(1)
-
 	img.Resize(scaleFactor, vips.KernelAuto)
 
 	// Create the mosaic
@@ -427,27 +557,30 @@ func New(config Config) (*Gosaic, error) {
 		scaleFactor:   scaleFactor,
 	}
 
+	if config.RedisAddr != "" {
+		g.rdb = redis.NewClient(&redis.Options{
+			Addr:     config.RedisAddr,
+			Password: "", // no password set
+			DB:       0,  // use default DB
+		})
+
+		resp := g.rdb.Ping(context.Background())
+		if resp.Err() != nil {
+			return nil, err
+		}
+	}
+
 	seed, err := img.ToImage(vips.NewDefaultPNGExportParams())
 	if err != nil {
 		return nil, err
 	}
 
 	g.SeedImage = seed.(*image.RGBA)
-
-	g.loadTiles()
-
-	/*
-		exportOpts := vips.NewJpegExportParams()
-		exportOpts.Quality = 80
-		bytes, _, err := img.ExportJpeg(exportOpts)
-
-		fh, err := os.Create(config.OutputImage)
-		if err != nil {
-			return nil, err
-		}
-		fh.Write(bytes)
-		fh.Close()
-	*/
+	if g.config.RedisAddr != "" && g.config.RedisLabel != "" {
+		g.loadTilesFromRedis()
+	} else {
+		g.loadTilesFromDisk()
+	}
 
 	return &g, nil
 }

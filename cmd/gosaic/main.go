@@ -12,21 +12,25 @@ import (
 	"github.com/elcamino/gosaic"
 )
 
-func main() {
-	var (
-		seed        = flag.String("seed", "master.jpg", "the seed image")
-		tilesGlob   = flag.String("tiles", "tiles/*", "glob for all tiles")
-		tileSize    = flag.Int("tilesize", 100, "size of each tile")
-		outputSize  = flag.Int("outputsize", 2000, "size of the output file")
-		output      = flag.String("output", "mosaic.jpg", "the mosaic output file")
-		comparesize = flag.Int("comparesize", 20, "the size to which to scale pictures before comparing them for their distance")
-		comparedist = flag.Int("comparedist", 30, "only compare image whose average color is this far apart")
-		unique      = flag.Bool("unique", false, "use each tile only once")
-		cpuprofile  = flag.String("cpuprofile", "", "profile the CPU usage to this file")
-		smartcrop   = flag.Bool("smartcrop", false, "perform smart cropping of the tiles")
-		progressbar = flag.Bool("progressbar", false, "show a progress bar when loading tiles and building the mosaic")
-	)
+var (
+	seed        = flag.String("seed", "", "the seed image")
+	tilesGlob   = flag.String("tiles", "", "glob for all tiles")
+	tileSize    = flag.Int("tilesize", 100, "size of each tile")
+	outputSize  = flag.Int("outputsize", 2000, "size of the output file")
+	output      = flag.String("output", "mosaic.jpg", "the mosaic output file")
+	comparesize = flag.Int("comparesize", 50, "the size to which to scale pictures before comparing them for their distance")
+	comparedist = flag.Int("comparedist", 30, "only compare image whose average color is this far apart")
+	unique      = flag.Bool("unique", true, "use each tile only once")
+	cpuprofile  = flag.String("cpuprofile", "", "profile the CPU usage to this file")
+	smartcrop   = flag.Bool("smartcrop", false, "perform smart cropping of the tiles")
+	progressbar = flag.Bool("progressbar", false, "show a progress bar when loading tiles and building the mosaic")
+	redisAddr   = flag.String("redisaddr", "127.0.0.1:6379", "use the tile cache at this redis address")
+	redisLabel  = flag.String("redislabel", "interesting", "load cached tiles with this label")
+)
 
+func main() {
+
+	log.SetFlags(log.Flags() | log.Lshortfile)
 	flag.Parse()
 
 	if *cpuprofile != "" {
@@ -38,7 +42,7 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
-	g, err := gosaic.New(gosaic.Config{
+	config := gosaic.Config{
 		SeedImage:   *seed,
 		TilesGlob:   *tilesGlob,
 		TileSize:    *tileSize,
@@ -49,13 +53,16 @@ func main() {
 		Unique:      *unique,
 		SmartCrop:   *smartcrop,
 		ProgressBar: *progressbar,
-	})
+		RedisAddr:   *redisAddr,
+		RedisLabel:  *redisLabel,
+	}
+
+	g, err := gosaic.New(config)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	g.Build()
-
 }
 
 func main2() {
