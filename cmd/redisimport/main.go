@@ -51,6 +51,19 @@ func main() {
 			continue
 		}
 
+		// remove a white frame around the picture
+		left, top, width, height, err := img.FindTrim(40, &vips.Color{R: 255, G: 255, B: 255})
+		if err != nil {
+			log.Printf("%s: %s\n", filename, err)
+		}
+
+		if width < img.Width() || height < img.Height() {
+			err = img.ExtractArea(left, top, width, height)
+			if err != nil {
+				log.Printf("%s: %s\n", filename, err)
+			}
+		}
+
 		err = img.Thumbnail(*tileSize, *tileSize, vips.InterestingCentre)
 		if err != nil {
 			log.Printf("%s: %s\n", filename, err)
