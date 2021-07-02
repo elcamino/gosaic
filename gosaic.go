@@ -369,6 +369,7 @@ func (g *Gosaic) loadTileFromDisk(filename string, size int) (Tile, error) {
 }
 
 func (g *Gosaic) Build() {
+	tBuildStart := time.Now()
 	rows := g.SeedImage.Bounds().Size().X/g.config.TileSize + 1
 	cols := g.SeedImage.Bounds().Size().Y/g.config.TileSize + 1
 
@@ -465,15 +466,16 @@ func (g *Gosaic) Build() {
 						continue
 					}
 
+					tileMutex.Lock()
+					comparisons++
+					tCompare += time.Now().Sub(tStart)
+
 					if dist < minDist {
-						tileMutex.Lock()
 						minTile = tile
 						minDist = dist
 						minTileElem = elem
-						comparisons++
-						tCompare += time.Now().Sub(tStart)
-						tileMutex.Unlock()
 					}
+					tileMutex.Unlock()
 				}
 				tileWG.Done()
 			}(i)
@@ -521,6 +523,7 @@ func (g *Gosaic) Build() {
 	log.Printf("Rect time: %s\n", tRect)
 	log.Printf("Compare time: %s\n", tCompare)
 	log.Printf("Load time: %s\n", tLoad)
+	log.Printf("Total time: %s\n", time.Now().Sub(tBuildStart))
 	err := g.SaveAsJPEG(g.SeedImage, g.config.OutputImage)
 	if err != nil {
 		log.Fatal(err)
