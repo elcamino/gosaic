@@ -4,12 +4,16 @@ import (
 	"flag"
 	"fmt"
 	"image"
-	"log"
 	"os"
+	"path"
+	"runtime"
 	"runtime/pprof"
+	"strings"
 
 	"github.com/davidbyttow/govips/v2/vips"
 	"github.com/elcamino/gosaic"
+	"github.com/sirupsen/logrus"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -26,12 +30,79 @@ var (
 	progressbar = flag.Bool("progressbar", false, "show a progress bar when loading tiles and building the mosaic")
 	redisAddr   = flag.String("redisaddr", "127.0.0.1:6379", "use the tile cache at this redis address")
 	redisLabel  = flag.String("redislabel", "interesting", "load cached tiles with this label")
+	httpAddr    = flag.String("http-address", "", "run the REST API server at this address")
+	apiKey      = flag.String("api-key", "", "the API key with which to authenticate requests")
+	loglevel    = flag.String("loglevel", "error", "the loglevel")
 )
+
+type lineNumberHook struct {
+	skip int
+}
+
+func (hook *lineNumberHook) Levels() []log.Level {
+	return log.AllLevels
+}
+
+func (hook *lineNumberHook) Fire(entry *log.Entry) error {
+	// determine the call stack skip level for logrus to print the calling file/function/line number
+	if hook.skip == -1 {
+		i := 0
+		for {
+			pc, file, _, ok := runtime.Caller(i)
+
+			if !ok {
+				hook.skip = -2
+				break
+			}
+
+			fname := runtime.FuncForPC(pc).Name()
+			if !strings.Contains(file, "sirupsen/logrus") && !strings.Contains(fname, "lineNumberHook") {
+				hook.skip = i
+				break
+			}
+
+			i++
+		}
+	}
+
+	// don't try to add the file/func/line number info if the skip level couldn't be determined
+	if hook.skip < 0 {
+		return nil
+	}
+
+	// add the file, func name and line number in each log entry
+	if pc, file, line, ok := runtime.Caller(hook.skip); ok {
+		funcName := runtime.FuncForPC(pc).Name()
+
+		entry.Data["src"] = fmt.Sprintf("%s:%v:%s", path.Base(file), line, path.Base(funcName))
+	}
+
+	return nil
+}
+
+func runServer() error {
+	srv, err := gosaic.NewServer(*httpAddr, *redisAddr)
+	if err != nil {
+		return err
+	}
+	return srv.Run()
+}
 
 func main() {
 
-	log.SetFlags(log.Flags() | log.Lshortfile)
 	flag.Parse()
+
+	level, err := logrus.ParseLevel(*loglevel)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.SetLevel(level)
+	log.AddHook(&lineNumberHook{skip: -1})
+
+	if *httpAddr != "" {
+		runServer()
+		return
+	}
 
 	if *cpuprofile != "" {
 		f, err := os.Create(*cpuprofile)
