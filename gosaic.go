@@ -604,6 +604,7 @@ func New(config Config) (*Gosaic, error) {
 			Comparisons: 0,
 			CompareTime: 0,
 			mutex:       sync.Mutex{},
+			TStart:      time.Now(),
 		},
 		mutex:        sync.Mutex{},
 		tileDataChan: make(chan TileData),
