@@ -87,7 +87,7 @@ func (c *ProgressCounter) Increment() *pb.ProgressBar {
 	atomic.AddUint64(&c.count, 1)
 	cur := atomic.LoadUint64(&c.count)
 	max := atomic.LoadUint64(&c.max)
-	log.Infof("%d/%d (%.2f%%)\n", cur, max, 100.0*float64(cur)/float64(max))
+	log.Infof("%d/%d (%.2f%%)", cur, max, 100.0*float64(cur)/float64(max))
 	return nil
 }
 
@@ -166,7 +166,6 @@ func (g *Gosaic) loadTilesFromRedis() error {
 			continue
 		}
 
-		// tile = g.BuildTile()
 		tile, err := g.buildTile(img, k, avg)
 		if err != nil {
 			log.Error(err)
@@ -246,7 +245,7 @@ func (g *Gosaic) loadTilesFromDisk() error {
 
 				tile, err := g.loadTileFromDisk(path, g.config.CompareSize)
 				if err != nil {
-					log.Warnf("%s: %s\n", path, err)
+					log.Warnf("%s: %s", path, err)
 					continue
 				}
 
@@ -308,7 +307,7 @@ func (g *Gosaic) Difference(img1, img2 HasAt) (float64, error) {
 func (g *Gosaic) SaveAsJPEG(img image.Image, filename string) error {
 	fh, err := os.Create(filename)
 	if err != nil {
-		return fmt.Errorf("%s: %s\n", filename, err)
+		return fmt.Errorf("%s: %s", filename, err)
 	}
 	defer fh.Close()
 
@@ -405,7 +404,7 @@ func (g *Gosaic) loadTileFromDisk(filename string, size int) (Tile, error) {
 
 	img, err := imgRef.ToImage(vips.NewDefaultPNGExportParams())
 	if err != nil {
-		log.Errorf("create image %s error: %s\n", filename, err)
+		log.Errorf("create image %s error: %s", filename, err)
 	}
 	return Tile{Tiny: img, Average: avg, Filename: filename}, err
 }
@@ -469,7 +468,7 @@ func (g *Gosaic) Build() error {
 		for y := 0; y < cols; y++ {
 			rect, err := g.loadRect(x, y)
 			if err != nil {
-				log.Errorf("%d/%d load error %s\n", x, y, err)
+				log.Errorf("%d/%d load error %s", x, y, err)
 				continue
 			}
 			rects = append(rects, rect)
@@ -525,11 +524,11 @@ func (g *Gosaic) Build() error {
 		wg.Wait()
 
 		if td == nil || td.MinTile == nil || td.MinTile.Filename == "" {
-			log.Warnf("minTile is empty at rect %d/%d (%v)\n", td.Rect.Min.X, td.Rect.Min.Y, td.MinTile)
+			log.Warnf("minTile is empty at rect %d/%d (%v)", td.Rect.Min.X, td.Rect.Min.Y, td.MinTile)
 			continue
 		}
 
-		log.Tracef("tile %d/%d (%v) read\n", td.X, td.Y, td.Rect)
+		log.Tracef("tile %d/%d (%v) read", td.X, td.Y, td.Rect)
 
 		compareTime += *td.CompareTime
 
@@ -561,12 +560,12 @@ func (g *Gosaic) Build() error {
 		bar.Finish()
 	}
 
-	log.Infof("Comparisons: %d\n", g.stats.Comparisons)
-	log.Infof("Compare time: %s\n", compareTime)
-	log.Infof("Wall time: %s\n", time.Now().Sub(g.stats.TStart))
+	log.Infof("Comparisons: %d", g.stats.Comparisons)
+	log.Infof("Compare time: %s", compareTime)
+	log.Infof("Wall time: %s", time.Now().Sub(g.stats.TStart))
 	err := g.SaveAsJPEG(g.SeedImage, g.config.OutputImage)
 	if err != nil {
-		log.Errorf("save error: %s\n", err)
+		log.Errorf("save error: %s", err)
 		return err
 	}
 
@@ -581,7 +580,7 @@ func (g *Gosaic) tileWorker(id int, wg *sync.WaitGroup, tileDataChan chan *TileD
 		tile = td.TileElem.Value.(Tile)
 		tStart := time.Now()
 		if tile.Tiny == nil {
-			log.Errorf("%s has empty image data\n", tile.Filename)
+			log.Errorf("%s has empty image data", tile.Filename)
 			continue
 		}
 
@@ -606,7 +605,7 @@ func (g *Gosaic) tileWorker(id int, wg *sync.WaitGroup, tileDataChan chan *TileD
 		td.Mutex.Lock()
 		*td.CompareTime += time.Now().Sub(tStart)
 		if dist < *td.MinDist {
-			log.Tracef("found tile %s (%.4f < %.4f)\n", tile.Filename, dist, *td.MinDist)
+			log.Tracef("found tile %s (%.4f < %.4f)", tile.Filename, dist, *td.MinDist)
 			*td.MinDist = dist
 			*td.MinTile = tile
 			*td.MinElem = *td.TileElem
