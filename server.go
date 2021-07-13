@@ -19,7 +19,6 @@ type Seed struct {
 	Comparesize int                   `form:"comparesize" binding:"required" json:"comparesize"`
 	RedisLabel  string                `form:"redislabel" binding:"required" json:"redislabel"`
 	OutputSize  int                   `form:"outputsize" binding:"required" json:"outputsize"`
-	TilesGlob   string                `form:"tilesglob" binding:"required" json:"tilesglob"`
 	CompareDist float64               `form:"comparedist" binding:"required" json:"comparedist"`
 	Unique      bool                  `form:"unique" binding:"-" json:"unique"`
 	SmartCrop   bool                  `form:"smartcrop" binding:"-" json:"smartcrop"`
@@ -32,7 +31,7 @@ type Server struct {
 }
 
 func (s *Server) Run() error {
-	return s.router.Run()
+	return s.router.Run(s.addr)
 }
 
 func NewServer(addr, redisAddr string) (*Server, error) {
@@ -90,7 +89,6 @@ func NewServer(addr, redisAddr string) (*Server, error) {
 
 		config := Config{
 			SeedImage:   tmpfile.Name(),
-			TilesGlob:   s.TilesGlob,
 			TileSize:    s.Tilesize,
 			OutputSize:  s.OutputSize,
 			OutputImage: outFile,
@@ -111,7 +109,10 @@ func NewServer(addr, redisAddr string) (*Server, error) {
 			return
 		}
 
-		g.Build()
+		err = g.Build()
+		if err != nil {
+			log.Fatal(err)
+		}
 
 		stat, err := os.Stat(outFile)
 		if err != nil {

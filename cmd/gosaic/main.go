@@ -71,7 +71,7 @@ func (hook *lineNumberHook) Fire(entry *log.Entry) error {
 	}
 
 	// add the file, func name and line number in each log entry
-	if pc, file, line, ok := runtime.Caller(hook.skip); ok {
+	if pc, file, line, ok := runtime.Caller(hook.skip + 1); ok {
 		funcName := runtime.FuncForPC(pc).Name()
 
 		entry.Data["src"] = fmt.Sprintf("%s:%v:%s", path.Base(file), line, path.Base(funcName))
@@ -89,9 +89,9 @@ func runServer() error {
 }
 
 func main() {
-
 	flag.Parse()
 
+	// log.SetFlags(log.Flags() | log.Lshortfile)
 	level, err := logrus.ParseLevel(*loglevel)
 	if err != nil {
 		log.Fatal(err)
@@ -133,7 +133,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	g.Build()
+	err = g.Build()
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func main2() {
@@ -153,7 +156,6 @@ func main2() {
 	if err != nil {
 		log.Fatalf("%s: %s", img1Path, err)
 	}
-	//img1.SmartCrop(100, 100, vips.InterestingCentre)
 
 	rect := image.Rect(0, 0, 100, 100)
 	iimg1, err := img1.ToImage(vips.NewDefaultPNGExportParams())
