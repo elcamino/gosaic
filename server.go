@@ -22,6 +22,7 @@ type Seed struct {
 	CompareDist float64               `form:"comparedist" binding:"required" json:"comparedist"`
 	Unique      bool                  `form:"unique" binding:"-" json:"unique"`
 	SmartCrop   bool                  `form:"smartcrop" binding:"-" json:"smartcrop"`
+	Progress    bool                  `form:"progress" binding:"-" json:"progress"`
 }
 
 type Server struct {
@@ -88,18 +89,19 @@ func NewServer(addr, redisAddr string) (*Server, error) {
 		outFile := fmt.Sprintf("mosaics/%s.jpg", mosaicUUID)
 
 		config := Config{
-			SeedImage:   tmpfile.Name(),
-			TileSize:    s.Tilesize,
-			OutputSize:  s.OutputSize,
-			OutputImage: outFile,
-			CompareSize: s.Comparesize,
-			CompareDist: float64(s.CompareDist),
-			Unique:      s.Unique,
-			SmartCrop:   s.SmartCrop,
-			ProgressBar: false,
-			RedisAddr:   srv.redisAddr,
-			RedisLabel:  s.RedisLabel,
-			HTTPAddr:    addr,
+			SeedImage:    tmpfile.Name(),
+			TileSize:     s.Tilesize,
+			OutputSize:   s.OutputSize,
+			OutputImage:  outFile,
+			CompareSize:  s.Comparesize,
+			CompareDist:  float64(s.CompareDist),
+			Unique:       s.Unique,
+			SmartCrop:    s.SmartCrop,
+			ProgressBar:  false,
+			RedisAddr:    srv.redisAddr,
+			RedisLabel:   s.RedisLabel,
+			HTTPAddr:     addr,
+			ProgressText: s.Progress,
 		}
 
 		g, err := New(config)

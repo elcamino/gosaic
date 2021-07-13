@@ -17,22 +17,23 @@ import (
 )
 
 var (
-	seed        = flag.String("seed", "", "the seed image")
-	tilesGlob   = flag.String("tiles", "", "glob for all tiles")
-	tileSize    = flag.Int("tilesize", 100, "size of each tile")
-	outputSize  = flag.Int("outputsize", 2000, "size of the output file")
-	output      = flag.String("output", "mosaic.jpg", "the mosaic output file")
-	comparesize = flag.Int("comparesize", 50, "the size to which to scale pictures before comparing them for their distance")
-	comparedist = flag.Int("comparedist", 30, "only compare image whose average color is this far apart")
-	unique      = flag.Bool("unique", true, "use each tile only once")
-	cpuprofile  = flag.String("cpuprofile", "", "profile the CPU usage to this file")
-	smartcrop   = flag.Bool("smartcrop", false, "perform smart cropping of the tiles")
-	progressbar = flag.Bool("progressbar", false, "show a progress bar when loading tiles and building the mosaic")
-	redisAddr   = flag.String("redisaddr", "127.0.0.1:6379", "use the tile cache at this redis address")
-	redisLabel  = flag.String("redislabel", "interesting", "load cached tiles with this label")
-	httpAddr    = flag.String("http-address", "", "run the REST API server at this address")
-	apiKey      = flag.String("api-key", "", "the API key with which to authenticate requests")
-	loglevel    = flag.String("loglevel", "error", "the loglevel")
+	seed         = flag.String("seed", "", "the seed image")
+	tilesGlob    = flag.String("tiles", "", "glob for all tiles")
+	tileSize     = flag.Int("tilesize", 100, "size of each tile")
+	outputSize   = flag.Int("outputsize", 2000, "size of the output file")
+	output       = flag.String("output", "mosaic.jpg", "the mosaic output file")
+	comparesize  = flag.Int("comparesize", 50, "the size to which to scale pictures before comparing them for their distance")
+	comparedist  = flag.Int("comparedist", 30, "only compare image whose average color is this far apart")
+	unique       = flag.Bool("unique", true, "use each tile only once")
+	cpuprofile   = flag.String("cpuprofile", "", "profile the CPU usage to this file")
+	smartcrop    = flag.Bool("smartcrop", false, "perform smart cropping of the tiles")
+	progressbar  = flag.Bool("progressbar", false, "show a progress bar when loading tiles and building the mosaic")
+	progresstext = flag.Bool("progresstext", false, "show the progress line by line")
+	redisAddr    = flag.String("redisaddr", "127.0.0.1:6379", "use the tile cache at this redis address")
+	redisLabel   = flag.String("redislabel", "interesting", "load cached tiles with this label")
+	httpAddr     = flag.String("http-address", "", "run the REST API server at this address")
+	apiKey       = flag.String("api-key", "", "the API key with which to authenticate requests")
+	loglevel     = flag.String("loglevel", "error", "the loglevel")
 )
 
 type lineNumberHook struct {
@@ -114,18 +115,19 @@ func main() {
 	}
 
 	config := gosaic.Config{
-		SeedImage:   *seed,
-		TilesGlob:   *tilesGlob,
-		TileSize:    *tileSize,
-		OutputSize:  *outputSize,
-		OutputImage: *output,
-		CompareSize: *comparesize,
-		CompareDist: float64(*comparedist),
-		Unique:      *unique,
-		SmartCrop:   *smartcrop,
-		ProgressBar: *progressbar,
-		RedisAddr:   *redisAddr,
-		RedisLabel:  *redisLabel,
+		SeedImage:    *seed,
+		TilesGlob:    *tilesGlob,
+		TileSize:     *tileSize,
+		OutputSize:   *outputSize,
+		OutputImage:  *output,
+		CompareSize:  *comparesize,
+		CompareDist:  float64(*comparedist),
+		Unique:       *unique,
+		SmartCrop:    *smartcrop,
+		ProgressBar:  *progressbar,
+		ProgressText: *progresstext,
+		RedisAddr:    *redisAddr,
+		RedisLabel:   *redisLabel,
 	}
 
 	g, err := gosaic.New(config)

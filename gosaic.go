@@ -30,19 +30,20 @@ import (
 )
 
 type Config struct {
-	SeedImage   string
-	OutputImage string
-	OutputSize  int
-	TileSize    int
-	TilesGlob   string
-	CompareSize int
-	CompareDist float64
-	Unique      bool
-	SmartCrop   bool
-	ProgressBar bool
-	RedisAddr   string
-	RedisLabel  string
-	HTTPAddr    string
+	SeedImage    string
+	OutputImage  string
+	OutputSize   int
+	TileSize     int
+	TilesGlob    string
+	CompareSize  int
+	CompareDist  float64
+	Unique       bool
+	SmartCrop    bool
+	ProgressBar  bool
+	ProgressText bool
+	RedisAddr    string
+	RedisLabel   string
+	HTTPAddr     string
 }
 
 type Tile struct {
@@ -132,14 +133,17 @@ func (g *Gosaic) loadTilesFromRedis() error {
 	}
 
 	var bar ProgressIndicator
-	if g.config.ProgressBar {
+	switch {
+	case g.config.ProgressBar:
 		bar = pb.StartNew(len(keys))
-	} else {
+	case g.config.ProgressText:
 		bar = &ProgressCounter{count: 0, max: uint64(len(keys))}
 	}
 
 	for _, k := range keys {
-		bar.Increment()
+		if bar != nil {
+			bar.Increment()
+		}
 		tStart := time.Now()
 
 		keyParts := strings.Split(k, ":")
@@ -173,7 +177,9 @@ func (g *Gosaic) loadTilesFromRedis() error {
 		tRedis += time.Now().Sub(tStart)
 	}
 
-	bar.Finish()
+	if bar != nil {
+		bar.Finish()
+	}
 	return nil
 }
 
@@ -229,7 +235,7 @@ func (g *Gosaic) loadTilesFromDisk() error {
 	}
 
 	count := 0
-	for i := 0; i < 16; i++ {
+	for i := 0; i < 50; i++ {
 		go func(id int) {
 			wg.Add(1)
 			for path := range imgPathChan {
@@ -477,7 +483,18 @@ func (g *Gosaic) Build() error {
 	var wg sync.WaitGroup
 	compareTime := time.Duration(0)
 
+	var bar ProgressIndicator
+	switch {
+	case g.config.ProgressBar:
+		bar = pb.New(len(rects))
+	case g.config.ProgressText:
+		bar = &ProgressCounter{max: uint64(len(rects))}
+	}
+
 	for _, td := range rects {
+		if bar != nil {
+			bar.Increment()
+		}
 		tileDataChan := make(chan *TileData)
 
 		for i := 0; i < 16; i++ {
@@ -539,6 +556,9 @@ func (g *Gosaic) Build() error {
 		}
 		rect := image.Rect(td.X*g.config.TileSize, td.Y*g.config.TileSize, (td.X+td.Rect.Dx())*g.config.TileSize, (td.Y+td.Rect.Dy())*g.config.TileSize)
 		draw.Draw(g.SeedImage, rect, tile.Tiny, image.ZP, draw.Over)
+	}
+	if bar != nil {
+		bar.Finish()
 	}
 
 	log.Infof("Comparisons: %d\n", g.stats.Comparisons)
