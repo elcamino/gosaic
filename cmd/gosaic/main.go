@@ -34,6 +34,7 @@ var (
 	httpAddr     = flag.String("http-address", "", "run the REST API server at this address")
 	apiKey       = flag.String("api-key", "", "the API key with which to authenticate requests")
 	loglevel     = flag.String("loglevel", "error", "the loglevel")
+	workers      = flag.Int("workers", 16, "run this many tile workers in parallel")
 )
 
 type lineNumberHook struct {
@@ -128,6 +129,7 @@ func main() {
 		ProgressText: *progresstext,
 		RedisAddr:    *redisAddr,
 		RedisLabel:   *redisLabel,
+		Workers:      *workers,
 	}
 
 	g, err := gosaic.New(config)

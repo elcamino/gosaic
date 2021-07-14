@@ -23,6 +23,7 @@ type Seed struct {
 	Unique      bool                  `form:"unique" binding:"-" json:"unique"`
 	SmartCrop   bool                  `form:"smartcrop" binding:"-" json:"smartcrop"`
 	Progress    bool                  `form:"progress" binding:"-" json:"progress"`
+	Workers     int                   `form:"workers" binding:"-" json:"workers"`
 }
 
 type Server struct {
@@ -102,6 +103,7 @@ func NewServer(addr, redisAddr string) (*Server, error) {
 			RedisLabel:   s.RedisLabel,
 			HTTPAddr:     addr,
 			ProgressText: s.Progress,
+			Workers:      s.Workers,
 		}
 
 		g, err := New(config)

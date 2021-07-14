@@ -44,6 +44,7 @@ type Config struct {
 	RedisAddr    string
 	RedisLabel   string
 	HTTPAddr     string
+	Workers      int
 }
 
 type Tile struct {
@@ -496,7 +497,7 @@ func (g *Gosaic) Build() error {
 		}
 		tileDataChan := make(chan *TileData)
 
-		for i := 0; i < 16; i++ {
+		for i := 0; i < g.config.Workers; i++ {
 			wg.Add(1)
 			go g.tileWorker(i, &wg, tileDataChan)
 		}
