@@ -35,6 +35,8 @@ var (
 	apiKey       = flag.String("api-key", "", "the API key with which to authenticate requests")
 	loglevel     = flag.String("loglevel", "error", "the loglevel")
 	workers      = flag.Int("workers", 16, "run this many tile workers in parallel")
+	user         = flag.String("user", "", "require HTTP authentication with this user")
+	password     = flag.String("password", "", "require HTTP authentication with thi password")
 )
 
 type lineNumberHook struct {
@@ -83,7 +85,7 @@ func (hook *lineNumberHook) Fire(entry *log.Entry) error {
 }
 
 func runServer() error {
-	srv, err := gosaic.NewServer(*httpAddr, *redisAddr)
+	srv, err := gosaic.NewServer(*httpAddr, *redisAddr, *user, *password)
 	if err != nil {
 		return err
 	}

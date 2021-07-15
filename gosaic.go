@@ -45,6 +45,8 @@ type Config struct {
 	RedisLabel   string
 	HTTPAddr     string
 	Workers      int
+	User         string
+	Password     string
 }
 
 type Tile struct {
