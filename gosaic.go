@@ -372,6 +372,7 @@ func (g *Gosaic) loadTileFromDisk(filename string, size int) (Tile, error) {
 	if err != nil {
 		return Tile{}, err
 	}
+	defer imgRef.Close()
 
 	// remove a white frame around the picture
 	left, top, width, height, err := imgRef.FindTrim(40, &vips.Color{R: 255, G: 255, B: 255})
@@ -439,6 +440,7 @@ func (g *Gosaic) loadRect(x, y int) (*TileData, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer imgRef.Close()
 
 	err = imgRef.Thumbnail(g.config.CompareSize, g.config.CompareSize, vips.InterestingCentre)
 	if err != nil {
@@ -629,6 +631,7 @@ func New(config Config) (*Gosaic, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer img.Close()
 
 	scaleFactorX := float64(config.OutputSize) / float64(img.Width())
 	scaleFactorY := float64(config.OutputSize) / float64(img.Height())

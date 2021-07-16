@@ -151,6 +151,9 @@ func (i *Importer) Import(filename string) {
 		log.Printf("%s: %s\n", filename, res.Err())
 	}
 
+	img.Close()
+	buf = nil
+	image = nil
 }
 
 func main() {
