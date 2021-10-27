@@ -490,15 +490,14 @@ func (g *Gosaic) Build() error {
 	var bar ProgressIndicator
 	switch {
 	case g.config.ProgressBar:
-		bar = pb.New(len(rects))
+		bar = pb.StartNew(len(rects))
 	case g.config.ProgressText:
 		bar = &ProgressCounter{max: uint64(len(rects))}
 	}
 
-	for _, td := range rects {
-		if bar != nil {
-			bar.Increment()
-		}
+	for i, td := range rects {
+
+		log.Infof("tile %d/%d", i, len(rects))
 		tileDataChan := make(chan *TileData)
 
 		for i := 0; i < g.config.Workers; i++ {
@@ -533,6 +532,9 @@ func (g *Gosaic) Build() error {
 			continue
 		}
 
+		if bar != nil {
+			bar.Increment()
+		}
 		log.Tracef("tile %d/%d (%v) read", td.X, td.Y, td.Rect)
 
 		compareTime += *td.CompareTime
