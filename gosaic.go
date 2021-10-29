@@ -473,7 +473,7 @@ func (g *Gosaic) Build() error {
 		for y := 0; y < cols; y++ {
 			rect, err := g.loadRect(x, y)
 			if err != nil {
-				log.Errorf("%d/%d load error %s", x, y, err)
+				// log.Errorf("%d/%d load error %s", x, y, err)
 				continue
 			}
 			rects = append(rects, rect)
@@ -495,9 +495,9 @@ func (g *Gosaic) Build() error {
 		bar = &ProgressCounter{max: uint64(len(rects))}
 	}
 
-	for i, td := range rects {
+	for _, td := range rects {
 
-		log.Infof("tile %d/%d", i, len(rects))
+		//log.Infof("tile %d/%d", i, len(rects))
 		tileDataChan := make(chan *TileData)
 
 		for i := 0; i < g.config.Workers; i++ {
